@@ -1,81 +1,149 @@
 # skyland-auto-sign
 
-适用于青龙面板的森空岛签到脚本
 
-原项目: https://gitee.com/FancyCabbage/skyland-auto-sign
+用于森空岛绑定角色签到，支持明日方舟和终末地。项目拆分为两个脚本：
 
+- `Get_Token.py`：获取 `SKYLAND_TOKEN`
+- `Auto_Sign.py`：使用 `SKYLAND_TOKEN` 执行签到
 
-## 使用
+## 依赖
 
-1. 添加环境变量
+```bash
+pip install requests
+```
 
-   名称: `SKYLAND_TOKEN`
+如果希望在终端里直接显示二维码：
 
-   值: `Token1;Token2;`
+```bash
+pip install qrcode
+```
 
-   记得添加`;`
+未安装 `qrcode` 时，脚本会输出二维码图片链接。
 
-2. 青龙面板添加订阅
+## 青龙面板使用
 
-   地址: `https://github.com/lTinchl/skyland-auto-sign`
+### 1. 获取 Token
 
-   推荐定时: `0 0 23 1 * *`
+先运行 `Get_Token.py`。
 
-   分支: `master`
+默认方式是森空岛 App 扫码
 
-3. 运行订阅
+手机号验证码(需在物理机使用)：
 
-4. 默认定时`0 30 8 * * *` , 每天上午8：30运行
+```env
+SKYLAND_LOGIN_MODE=1
+SKYLAND_PHONE=手机号
+SKYLAND_CODE=短信验证码
+```
 
-## 获取Token
+账号密码：
 
-1. 登录[森空岛](https://www.skland.com/)
+```env
+SKYLAND_LOGIN_MODE=2
+SKYLAND_PHONE=手机号
+SKYLAND_PASSWORD=密码
+```
 
-2. 访问这个网址 https://web-api.skland.com/account/info/hg
+扫码成功或登录成功后，如果没有配置青龙 OpenAPI，日志会高亮输出：
 
-   会返回如下信息
+```env
+SKYLAND_TOKEN=xxxx
+```
 
-   ```json
-   {
-     "code": 0,
-     "data": {
-       "content": "Token"
-     },
-     "msg": "接口会返回您的鹰角网络通行证账号的登录凭证，此凭证可以用于鹰角网络账号系统校验您登录的有效性。泄露登录凭证属于极度危险操作，为了您的账号安全，请勿将此凭证以任何形式告知他人！"
-   }
-   ```
+把这一行复制到青龙环境变量即可。
 
-   data.content即为token
+### 2. 自动写入青龙变量
 
-## 通知(可选)
+如果希望 `Get_Token.py` 自动创建 `SKYLAND_TOKEN` 环境变量，需要配置青龙 OpenAPI：
 
-1. 添加环境变量
-   
-   名称: `SKYLAND_NOTIFY`
+```env
+QL_CLIENT_ID=青龙应用client_id
+QL_CLIENT_SECRET=青龙应用client_secret
+```
 
-   值如下表
+或直接配置：
 
-   | 值        | 说明       |
-   | -------- | -------- |
-   | TG       | Telegram |
-   | BARK     | bark     |
-   | DD       | 钉钉机器人    |
-   | FSKEY    | 飞书机器人    |
-   | GOBOT    |  QQ机器人        |
-   | IGOT     |   iGot 聚合推送       |
-   | SERVERJ  |    server 酱      |
-   | PUSHDEER |    PushDeer      |
-   | PUSHPLUS |    push+ 微信推送      |
-   | QMSG     |   qmsg 酱       |
-   | QYWXAPP  |   企业微信应用       |
-   | QYWXBOT  |  企业微信机器人        |
+```env
+QL_TOKEN=青龙OpenAPI token
+```
 
-   仅测试了TG，其他推送方式若有问题请反馈
+可选：
 
-2. 在青龙面板`配置管理`中填入相对应的推送API的环境变量即可
+```env
+QL_URL=http://127.0.0.1:5700
+SKYLAND_ENV_NAME=SKYLAND_TOKEN
+```
 
+### 3. 签到
 
-## 其他
+配置好 `SKYLAND_TOKEN` 后，运行 `Auto_Sign.py`。
 
-1. 需要requests包，若报错则在 `依赖管理-python3`，添加`requests`依赖
-   
+`Auto_Sign.py` 只负责签到，不负责登录或扫码。没有 Token 时会提示先运行 `Get_Token.py`。
+
+## 多账号
+
+多账号只需要配置多个 `SKYLAND_TOKEN`，支持换行、分号、逗号分隔：
+
+```env
+SKYLAND_TOKEN=token1
+token2
+token3
+```
+
+或：
+
+```env
+SKYLAND_TOKEN=token1;token2;token3
+```
+
+获取多个账号 Token 时，重复运行 `Get_Token.py`，分别扫码或登录不同账号，然后把多个 Token 合并到同一个 `SKYLAND_TOKEN` 环境变量中。
+
+## 物理机运行
+
+在本地电脑直接运行：
+
+```bash
+python Get_Token.py
+```
+
+未设置 `SKYLAND_LOGIN_MODE` 时，会显示菜单：
+
+```text
+0. 森空岛App扫码
+1. 手机号 + 验证码
+2. 账号密码
+```
+
+获取 Token 后，再运行：
+
+```bash
+python Auto_Sign.py
+```
+
+本地运行时也可以用环境变量配置 `SKYLAND_TOKEN`。
+
+## 常用配置
+
+```env
+# Token获取方式：0或不填=扫码，1=手机号验证码，2=账号密码
+SKYLAND_LOGIN_MODE=0
+
+# 扫码等待时间，单位秒
+SKYLAND_QR_WAIT=180
+
+# 扫码状态查询间隔，单位秒
+SKYLAND_QR_INTERVAL=2
+
+# 签到推送类型，依赖青龙notify
+SKYLAND_NOTIFY=
+```
+
+## 青龙定时
+
+`Auto_Sign.py` 默认定时：
+
+```text
+0 30 8 * * *
+```
+
+`Get_Token.py` 不建议定时执行，建议需要新增或刷新账号 Token 时手动运行。
