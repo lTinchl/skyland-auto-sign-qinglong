@@ -17,7 +17,7 @@
 
 2. 青龙面板添加订阅
 
-   地址: `https://github.com/lTinchl/skyland-auto-sign-qinglong`
+   地址: `https://github.com/lTinchl/skyland-auto-sign`
 
    推荐定时: `0 0 23 1 * *`
 
