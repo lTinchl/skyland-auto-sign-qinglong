@@ -322,7 +322,7 @@ def show_login_qr(content: str = ''):
         print('当前环境没有qrcode库，使用下面的二维码图片链接:')
         print(get_qr_image_url(content))
 
-    print('登录后页面返回JSON时，data.content就是SKYLAND_TOKEN。')
+    print('请使用森空岛App扫码，并在App内确认登录。')
 
 
 def create_scan_login():
@@ -488,6 +488,35 @@ def save_token_to_qinglong(token: str):
     return True
 
 
+def print_manual_token(token: str):
+    """
+    输出可复制的Token配置
+    """
+    line = f'{SKYLAND_ENV_NAME}={token}'
+    border = '=' * 72
+    logging.warning(border)
+    logging.warning('未配置青龙OpenAPI，无法自动写入变量。请复制下面这一行到青龙环境变量：')
+    logging.warning(line)
+    logging.warning(border)
+    print('\n' + border)
+    print('!!! 请复制下面这一行到青龙环境变量 !!!')
+    print(line)
+    print(border + '\n')
+
+
+def save_or_print_token(token: str):
+    """
+    优先写入青龙变量，失败或未配置OpenAPI时输出手动配置内容
+    """
+    try:
+        if save_token_to_qinglong(token):
+            return
+    except Exception as e:
+        logging.error(f'保存Token到青龙失败: {e}')
+
+    print_manual_token(token)
+
+
 def get_token_by_login_config():
     """
     通过环境变量配置登录并获取token
@@ -524,10 +553,7 @@ def get_token_by_login_config():
 
     if mode in ('qr', 'qrcode'):
         token = login_by_qrcode()
-        try:
-            save_token_to_qinglong(token)
-        except Exception as e:
-            logging.error(f'保存Token到青龙失败: {e}')
+        save_or_print_token(token)
         return [token]
 
     return []
@@ -549,10 +575,7 @@ def get_token_by_interactive_login():
 
     if choice == '1':
         token = login_by_qrcode()
-        try:
-            save_token_to_qinglong(token)
-        except Exception as e:
-            logging.error(f'保存Token到青龙失败: {e}')
+        save_or_print_token(token)
         return [token]
 
     if choice == '2':
