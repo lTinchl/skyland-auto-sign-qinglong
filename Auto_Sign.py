@@ -498,13 +498,15 @@ def get_token_by_login_config():
             mode = 'password'
         elif SKYLAND_PHONE:
             mode = 'code'
+        else:
+            mode = 'qr'
 
-    if mode in ('password', 'pwd', 'account'):
+    if mode in ('2', 'password', 'pwd', 'account'):
         if not SKYLAND_PHONE or not SKYLAND_PASSWORD:
             raise Exception('账号密码登录需要配置SKYLAND_PHONE和SKYLAND_PASSWORD')
         return [login_by_password(SKYLAND_PHONE, SKYLAND_PASSWORD)]
 
-    if mode in ('code', 'sms', 'phone'):
+    if mode in ('1', 'code', 'sms', 'phone'):
         if not SKYLAND_PHONE:
             raise Exception('手机号验证码登录需要配置SKYLAND_PHONE')
 
@@ -787,7 +789,7 @@ def main():
                 run_message += message + '\n'
                 logging.error(message)
 
-    # 如果配置了登录方式，则通过鹰角账号登录接口自动获取Token。
+    # 未配置Token/Cookie时，默认通过扫码登录获取Token；SKYLAND_LOGIN_MODE=1为验证码，=2为账号密码。
     if not token_list:
         try:
             token_list = get_token_by_login_config()
@@ -806,7 +808,7 @@ def main():
             logging.error(message)
 
     if not token_list:
-        error_msg = '没有可用TOKEN。扫码登录请把页面返回的data.content填到SKYLAND_TOKEN；也可配置SKYLAND_COOKIE，或用SKYLAND_LOGIN_MODE=password/code自动登录'
+        error_msg = '没有可用TOKEN。默认扫码登录未完成；也可配置SKYLAND_COOKIE，或用SKYLAND_LOGIN_MODE=1/2自动登录'
         logging.error(error_msg)
         run_message = error_msg
         send_message('森空岛签到', run_message, SKYLAND_NOTIFY)
