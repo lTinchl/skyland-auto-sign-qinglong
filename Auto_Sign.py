@@ -39,7 +39,17 @@ SKYLAND_PHONE = os.getenv('SKYLAND_PHONE') or ''
 SKYLAND_PASSWORD = os.getenv('SKYLAND_PASSWORD') or ''
 SKYLAND_CODE = os.getenv('SKYLAND_CODE') or os.getenv('SKYLAND_PHONE_CODE') or ''
 SKYLAND_DID = os.getenv('SKYLAND_DID') or uuid.uuid4().hex
+SKYLAND_QR_URL = os.getenv('SKYLAND_QR_URL') or 'https://web-api.skland.com/account/info/hg'
+SKYLAND_QR_WAIT = int(os.getenv('SKYLAND_QR_WAIT') or '180')
+SKYLAND_QR_INTERVAL = int(os.getenv('SKYLAND_QR_INTERVAL') or '2')
+SKYLAND_AUTO_SAVE_TOKEN = (os.getenv('SKYLAND_AUTO_SAVE_TOKEN') or '1').strip() not in ('0', 'false', 'False', 'no')
+SKYLAND_ENV_NAME = os.getenv('SKYLAND_ENV_NAME') or 'SKYLAND_TOKEN'
 SKYLAND_NOTIFY = os.getenv('SKYLAND_NOTIFY') or ''
+
+QL_URL = (os.getenv('QL_URL') or os.getenv('QL_HOST') or 'http://127.0.0.1:5700').rstrip('/')
+QL_CLIENT_ID = os.getenv('QL_CLIENT_ID') or ''
+QL_CLIENT_SECRET = os.getenv('QL_CLIENT_SECRET') or ''
+QL_TOKEN = os.getenv('QL_TOKEN') or ''
 
 # 消息内容
 run_message = ''
@@ -85,6 +95,9 @@ token_info_url = "https://web-api.skland.com/account/info/hg"
 login_code_url = "https://as.hypergryph.com/general/v1/send_phone_code"
 token_phone_code_url = "https://as.hypergryph.com/user/auth/v2/token_by_phone_code"
 token_password_url = "https://as.hypergryph.com/user/auth/v1/token_by_phone_password"
+scan_login_url = "https://as.hypergryph.com/general/v1/gen_scan/login"
+scan_status_url = "https://as.hypergryph.com/general/v1/scan_status"
+token_scan_code_url = "https://as.hypergryph.com/user/auth/v1/token_by_scan_code"
 
 app_code = '4ca99fa6b56cc2ba'
 
@@ -284,6 +297,111 @@ def extract_login_token(resp: dict, action: str):
     return token
 
 
+def get_qr_image_url(content: str):
+    """
+    生成在线二维码图片地址
+    """
+    return 'https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=' + parse.quote(content, safe='')
+
+
+def show_login_qr(content: str = ''):
+    """
+    输出第一个登录二维码，不轮询登录状态
+    """
+    content = content or SKYLAND_QR_URL
+    print('\n请扫码打开森空岛Token获取页:')
+    print(content)
+
+    try:
+        import qrcode
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(content)
+        qr.make(fit=True)
+        qr.print_ascii(invert=True)
+    except ImportError:
+        print('当前环境没有qrcode库，使用下面的二维码图片链接:')
+        print(get_qr_image_url(content))
+
+    print('登录后页面返回JSON时，data.content就是SKYLAND_TOKEN。')
+
+
+def create_scan_login():
+    """
+    创建鹰角扫码登录会话
+    """
+    resp = requests.post(scan_login_url, json={
+        'appCode': app_code
+    }, headers=header_login, timeout=20).json()
+
+    check_auth_response(resp, '创建扫码登录')
+
+    data = resp.get('data') or {}
+    scan_id = data.get('scanId')
+    scan_url = data.get('scanUrl')
+    if not scan_id or not scan_url:
+        raise Exception(f'创建扫码登录失败: 返回结果缺少scanId或scanUrl: {resp}')
+
+    return scan_id, scan_url
+
+
+def wait_scan_code(scan_id: str):
+    """
+    等待森空岛App扫码确认并返回scanCode
+    """
+    deadline = time.time() + SKYLAND_QR_WAIT
+
+    while time.time() < deadline:
+        resp = requests.get(scan_status_url, params={
+            'scanId': scan_id
+        }, headers=header_login, timeout=20).json()
+
+        status = resp.get('status', resp.get('code'))
+        data = resp.get('data') or {}
+        scan_code = data.get('scanCode')
+
+        if status == 0 and scan_code:
+            return scan_code
+
+        if status == 100:
+            logging.info('等待扫码...')
+        elif status == 101:
+            logging.info('已扫码，等待在App内确认登录...')
+        elif status == 102:
+            raise Exception('二维码已过期，请重新运行脚本生成新的二维码')
+        else:
+            msg = resp.get('msg') or resp.get('message')
+            logging.info(f'等待扫码状态: {status} {msg or ""}'.strip())
+
+        time.sleep(max(SKYLAND_QR_INTERVAL, 1))
+
+    raise Exception(f'扫码登录超时，超过 {SKYLAND_QR_WAIT} 秒未完成')
+
+
+def login_by_scan_code(scan_code: str):
+    """
+    通过扫码确认码换取token
+    """
+    resp = requests.post(token_scan_code_url, json={
+        'scanCode': scan_code,
+        'appCode': app_code
+    }, headers=header_login, timeout=20).json()
+
+    return extract_login_token(resp, '扫码登录')
+
+
+def login_by_qrcode():
+    """
+    通过森空岛App扫码登录并获取token
+    """
+    scan_id, scan_url = create_scan_login()
+    logging.info(f'扫码登录ID: {scan_id}')
+    show_login_qr(scan_url)
+    scan_code = wait_scan_code(scan_id)
+    token = login_by_scan_code(scan_code)
+    logging.info('扫码登录成功，已获取Token')
+    return token
+
+
 def send_phone_code(phone: str):
     """
     发送手机号验证码
@@ -320,6 +438,56 @@ def login_by_password(phone: str, password: str):
     return extract_login_token(resp, '账号密码登录')
 
 
+def get_ql_auth_header():
+    """
+    获取青龙OpenAPI认证头
+    """
+    token = QL_TOKEN
+
+    if not token and QL_CLIENT_ID and QL_CLIENT_SECRET:
+        resp = requests.get(f'{QL_URL}/open/auth/token', params={
+            'client_id': QL_CLIENT_ID,
+            'client_secret': QL_CLIENT_SECRET
+        }, timeout=20).json()
+
+        if resp.get('code') not in (200, 0):
+            raise Exception(f'获取青龙OpenAPI Token失败: {resp.get("message") or resp}')
+
+        token = resp.get('data', {}).get('token')
+
+    if not token:
+        return {}
+
+    return {'Authorization': f'Bearer {token}'}
+
+
+def save_token_to_qinglong(token: str):
+    """
+    将扫码获取到的Token保存到青龙环境变量
+    """
+    if not SKYLAND_AUTO_SAVE_TOKEN:
+        return False
+
+    headers = get_ql_auth_header()
+    if not headers:
+        logging.info('未配置QL_TOKEN或QL_CLIENT_ID/QL_CLIENT_SECRET，跳过自动写入青龙变量')
+        return False
+
+    headers['Content-Type'] = 'application/json'
+
+    resp = requests.post(f'{QL_URL}/open/envs', json=[{
+        'name': SKYLAND_ENV_NAME,
+        'value': token,
+        'remarks': '森空岛扫码登录自动创建'
+    }], headers=headers, timeout=20).json()
+
+    if resp.get('code') not in (200, 0):
+        raise Exception(f'写入青龙变量失败: {resp.get("message") or resp}')
+
+    logging.info(f'已写入青龙环境变量: {SKYLAND_ENV_NAME}')
+    return True
+
+
 def get_token_by_login_config():
     """
     通过环境变量配置登录并获取token
@@ -353,7 +521,12 @@ def get_token_by_login_config():
         raise Exception('验证码已发送，请把收到的验证码配置到SKYLAND_CODE后重新运行')
 
     if mode in ('qr', 'qrcode'):
-        raise Exception('当前脚本暂未实现二维码登录接口，请使用SKYLAND_COOKIE、手机号验证码或账号密码登录')
+        token = login_by_qrcode()
+        try:
+            save_token_to_qinglong(token)
+        except Exception as e:
+            logging.error(f'保存Token到青龙失败: {e}')
+        return [token]
 
     return []
 
@@ -366,12 +539,21 @@ def get_token_by_interactive_login():
         return []
 
     print('\n请选择登录方式:')
-    print('1. 手机号 + 验证码')
-    print('2. 账号密码')
-    print('3. 跳过登录')
+    print('1. 扫码获取Token')
+    print('2. 手机号 + 验证码')
+    print('3. 账号密码')
+    print('4. 跳过登录')
     choice = input('请输入序号: ').strip()
 
     if choice == '1':
+        token = login_by_qrcode()
+        try:
+            save_token_to_qinglong(token)
+        except Exception as e:
+            logging.error(f'保存Token到青龙失败: {e}')
+        return [token]
+
+    if choice == '2':
         phone = input('请输入手机号: ').strip()
         if not phone:
             raise Exception('未输入手机号')
@@ -382,7 +564,7 @@ def get_token_by_interactive_login():
             raise Exception('未输入短信验证码')
         return [login_by_phone_code(phone, code)]
 
-    if choice == '2':
+    if choice == '3':
         phone = input('请输入手机号: ').strip()
         password = getpass('请输入密码: ').strip()
         if not phone or not password:
@@ -589,7 +771,7 @@ def main():
     global run_message, account_num
 
     logging.info('========== 森空岛签到开始 ==========')
-    logging.info('项目地址: https://github.com/xxyz30/skyland-auto-sign')
+    logging.info('项目地址: https://github.com/lTinchl/skyland-auto-sign-qinglong')
 
     # 获取token列表
     token_list = split_token_items(SKYLAND_TOKEN)
@@ -624,7 +806,7 @@ def main():
             logging.error(message)
 
     if not token_list:
-        error_msg = '没有设置TOKEN，请配置SKYLAND_TOKEN/TOKEN、SKYLAND_COOKIE/SKLAND_COOKIE，或用SKYLAND_LOGIN_MODE=password/code自动登录'
+        error_msg = '没有可用TOKEN。扫码登录请把页面返回的data.content填到SKYLAND_TOKEN；也可配置SKYLAND_COOKIE，或用SKYLAND_LOGIN_MODE=password/code自动登录'
         logging.error(error_msg)
         run_message = error_msg
         send_message('森空岛签到', run_message, SKYLAND_NOTIFY)
