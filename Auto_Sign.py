@@ -30,6 +30,7 @@ except ImportError:
 # ==================== 配置区 ====================
 # 从环境变量获取配置
 SKYLAND_TOKEN = os.getenv('SKYLAND_TOKEN') or os.getenv('TOKEN') or ''
+SKYLAND_COOKIE = os.getenv('SKYLAND_COOKIE') or os.getenv('SKLAND_COOKIE') or ''
 SKYLAND_NOTIFY = os.getenv('SKYLAND_NOTIFY') or ''
 
 # 消息内容
@@ -71,6 +72,7 @@ sign_url_mapping = {
 binding_url = "https://zonai.skland.com/api/v1/game/player/binding"
 cred_code_url = "https://zonai.skland.com/web/v1/user/auth/generate_cred_by_code"
 grant_code_url = "https://as.hypergryph.com/user/oauth2/v2/grant"
+token_info_url = "https://web-api.skland.com/account/info/hg"
 
 app_code = '4ca99fa6b56cc2ba'
 
@@ -176,6 +178,39 @@ def copy_header(cred: str):
 
 
 # ==================== 登录相关函数 ====================
+def split_token_items(value: str):
+    """
+    拆分环境变量里的Token多账号配置
+    """
+    if not value:
+        return []
+
+    value = value.strip()
+    if value.startswith('{'):
+        return [value]
+
+    for sep in ['\n', ';', ',']:
+        if sep in value:
+            return [item.strip() for item in value.split(sep) if item.strip()]
+
+    return [value]
+
+
+def split_cookie_items(value: str):
+    """
+    拆分环境变量里的Cookie多账号配置
+    """
+    if not value:
+        return []
+
+    value = value.strip()
+    for sep in ['\n', '||']:
+        if sep in value:
+            return [item.strip() for item in value.split(sep) if item.strip()]
+
+    return [value]
+
+
 def parse_user_token(token_code: str):
     """
     解析用户token
@@ -185,6 +220,34 @@ def parse_user_token(token_code: str):
         return t['data']['content']
     except:
         return token_code
+
+
+def get_token_by_cookie(cookie: str):
+    """
+    通过森空岛网页登录Cookie获取用户token
+    """
+    headers = header_login.copy()
+    headers.update({
+        'Accept': 'application/json, text/plain, */*',
+        'Cookie': cookie,
+        'Referer': 'https://www.skland.com/',
+        'Origin': 'https://www.skland.com'
+    })
+
+    resp = requests.get(token_info_url, headers=headers, timeout=20)
+    try:
+        data = resp.json()
+    except ValueError:
+        raise Exception(f'通过Cookie获取Token失败: 接口返回非JSON内容，HTTP {resp.status_code}')
+
+    if data.get('code') != 0:
+        raise Exception(f'通过Cookie获取Token失败: {data.get("msg") or data.get("message") or data}')
+
+    token = data.get('data', {}).get('content')
+    if not token:
+        raise Exception('通过Cookie获取Token失败: 返回结果中没有data.content')
+
+    return token
 
 
 def get_grant_code(token: str):
@@ -387,18 +450,21 @@ def main():
     logging.info('项目地址: https://github.com/xxyz30/skyland-auto-sign')
 
     # 获取token列表
-    token_list = []
-    if SKYLAND_TOKEN:
-        # 支持多种分隔符: 换行、分号、逗号
-        for sep in ['\n', ';', ',']:
-            if sep in SKYLAND_TOKEN:
-                token_list = [t.strip() for t in SKYLAND_TOKEN.split(sep) if t.strip()]
-                break
-        if not token_list:
-            token_list = [SKYLAND_TOKEN.strip()]
+    token_list = split_token_items(SKYLAND_TOKEN)
+
+    # 如果未直接配置Token，则尝试用浏览器登录Cookie自动获取Token。
+    if not token_list and SKYLAND_COOKIE:
+        for idx, cookie in enumerate(split_cookie_items(SKYLAND_COOKIE), 1):
+            try:
+                logging.info(f'正在通过第 {idx} 个Cookie获取Token')
+                token_list.append(get_token_by_cookie(cookie))
+            except Exception as e:
+                message = f'第 {idx} 个Cookie获取Token失败: {e}'
+                run_message += message + '\n'
+                logging.error(message)
 
     if not token_list:
-        error_msg = '没有设置TOKEN，请在环境变量里添加SKYLAND_TOKEN或TOKEN'
+        error_msg = '没有设置TOKEN，请在环境变量里添加SKYLAND_TOKEN/TOKEN，或添加SKYLAND_COOKIE/SKLAND_COOKIE自动获取Token'
         logging.error(error_msg)
         run_message = error_msg
         send_message('森空岛签到', run_message, SKYLAND_NOTIFY)
