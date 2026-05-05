@@ -1,5 +1,4 @@
-# skyland-auto-sign
-
+# 森空岛签到 - 青龙面板版
 
 用于森空岛绑定角色签到，支持明日方舟和终末地。项目拆分为两个脚本：
 
@@ -26,9 +25,15 @@ pip install qrcode
 
 先运行 `Get_Token.py`。
 
-默认方式是森空岛 App 扫码
+默认方式是森空岛 App 扫码：
 
-手机号验证码(需在物理机使用)：
+```env
+SKYLAND_LOGIN_MODE=0
+```
+
+也可以不填 `SKYLAND_LOGIN_MODE`，默认就是扫码。
+
+手机号验证码：
 
 ```env
 SKYLAND_LOGIN_MODE=1
@@ -54,7 +59,7 @@ SKYLAND_TOKEN=xxxx
 
 ### 2. 自动写入青龙变量
 
-如果希望 `Get_Token.py` 自动创建 `SKYLAND_TOKEN` 环境变量，需要配置青龙 OpenAPI：
+如果希望 `Get_Token.py` 自动创建或更新 `SKYLAND_TOKEN` 环境变量，需要配置青龙 OpenAPI：
 
 ```env
 QL_CLIENT_ID=青龙应用client_id
@@ -96,7 +101,11 @@ token3
 SKYLAND_TOKEN=token1;token2;token3
 ```
 
-获取多个账号 Token 时，重复运行 `Get_Token.py`，分别扫码或登录不同账号，然后把多个 Token 合并到同一个 `SKYLAND_TOKEN` 环境变量中。
+获取多个账号 Token 时，重复运行 `Get_Token.py`，分别扫码或登录不同账号。
+
+如果配置了青龙 OpenAPI，脚本会自动把新 Token 追加到同一个 `SKYLAND_TOKEN` 变量里，而不是创建多个同名变量。同名变量在青龙运行时通常只会导出其中一个，不适合多账号。
+
+如果之前生成过错误的短 Token，请删除旧的同名 `SKYLAND_TOKEN` 变量后重新运行 `Get_Token.py`。
 
 ## 物理机运行
 
@@ -146,4 +155,4 @@ SKYLAND_NOTIFY=
 0 30 8 * * *
 ```
 
-`Get_Token.py` 不建议定时执行，建议需要新增或刷新账号 Token 时手动运行。
+`Get_Token.py` 默认定时写成每年 1 月 1 日，仅用于让青龙能合法添加任务；不建议日常自动执行。需要新增或刷新账号 Token 时，手动运行它即可。
