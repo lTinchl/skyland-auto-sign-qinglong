@@ -1,4 +1,4 @@
-# skyland-auto-sign-qinglong
+# skyland-auto-sign
 
 适用于青龙面板的森空岛签到脚本
 
