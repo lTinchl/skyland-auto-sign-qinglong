@@ -14,7 +14,10 @@ import hmac
 import json
 import logging
 import os
+import sys
 import time
+import uuid
+from getpass import getpass
 from urllib import parse
 
 import requests
@@ -31,6 +34,11 @@ except ImportError:
 # 从环境变量获取配置
 SKYLAND_TOKEN = os.getenv('SKYLAND_TOKEN') or os.getenv('TOKEN') or ''
 SKYLAND_COOKIE = os.getenv('SKYLAND_COOKIE') or os.getenv('SKLAND_COOKIE') or ''
+SKYLAND_LOGIN_MODE = (os.getenv('SKYLAND_LOGIN_MODE') or os.getenv('SKYLAND_TYPE') or '').strip().lower()
+SKYLAND_PHONE = os.getenv('SKYLAND_PHONE') or ''
+SKYLAND_PASSWORD = os.getenv('SKYLAND_PASSWORD') or ''
+SKYLAND_CODE = os.getenv('SKYLAND_CODE') or os.getenv('SKYLAND_PHONE_CODE') or ''
+SKYLAND_DID = os.getenv('SKYLAND_DID') or uuid.uuid4().hex
 SKYLAND_NOTIFY = os.getenv('SKYLAND_NOTIFY') or ''
 
 # 消息内容
@@ -50,6 +58,7 @@ header_login = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-A5560 Build/V417IR; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/101.0.4951.61 Safari/537.36; SKLand/1.52.1',
     'Accept-Encoding': 'gzip',
     'Connection': 'close',
+    'dId': SKYLAND_DID,
     'X-Requested-With': 'com.hypergryph.skland'
 }
 
@@ -73,6 +82,9 @@ binding_url = "https://zonai.skland.com/api/v1/game/player/binding"
 cred_code_url = "https://zonai.skland.com/web/v1/user/auth/generate_cred_by_code"
 grant_code_url = "https://as.hypergryph.com/user/oauth2/v2/grant"
 token_info_url = "https://web-api.skland.com/account/info/hg"
+login_code_url = "https://as.hypergryph.com/general/v1/send_phone_code"
+token_phone_code_url = "https://as.hypergryph.com/user/auth/v2/token_by_phone_code"
+token_password_url = "https://as.hypergryph.com/user/auth/v1/token_by_phone_password"
 
 app_code = '4ca99fa6b56cc2ba'
 
@@ -248,6 +260,136 @@ def get_token_by_cookie(cookie: str):
         raise Exception('通过Cookie获取Token失败: 返回结果中没有data.content')
 
     return token
+
+
+def check_auth_response(resp: dict, action: str):
+    """
+    检查鹰角账号接口返回值
+    """
+    status = resp.get('status', resp.get('code'))
+    if status != 0:
+        raise Exception(f'{action}失败: {resp.get("msg") or resp.get("message") or resp}')
+
+
+def extract_login_token(resp: dict, action: str):
+    """
+    从登录接口返回值中提取token
+    """
+    check_auth_response(resp, action)
+
+    token = resp.get('data', {}).get('token')
+    if not token:
+        raise Exception(f'{action}失败: 返回结果中没有data.token')
+
+    return token
+
+
+def send_phone_code(phone: str):
+    """
+    发送手机号验证码
+    """
+    resp = requests.post(login_code_url, json={
+        'phone': phone,
+        'type': 2
+    }, headers=header_login, timeout=20).json()
+
+    check_auth_response(resp, '发送验证码')
+
+
+def login_by_phone_code(phone: str, code: str):
+    """
+    通过手机号验证码登录并获取token
+    """
+    resp = requests.post(token_phone_code_url, json={
+        'phone': phone,
+        'code': code
+    }, headers=header_login, timeout=20).json()
+
+    return extract_login_token(resp, '手机号验证码登录')
+
+
+def login_by_password(phone: str, password: str):
+    """
+    通过账号密码登录并获取token
+    """
+    resp = requests.post(token_password_url, json={
+        'phone': phone,
+        'password': password
+    }, headers=header_login, timeout=20).json()
+
+    return extract_login_token(resp, '账号密码登录')
+
+
+def get_token_by_login_config():
+    """
+    通过环境变量配置登录并获取token
+    """
+    mode = SKYLAND_LOGIN_MODE
+    if not mode:
+        if SKYLAND_PHONE and SKYLAND_PASSWORD:
+            mode = 'password'
+        elif SKYLAND_PHONE:
+            mode = 'code'
+
+    if mode in ('password', 'pwd', 'account'):
+        if not SKYLAND_PHONE or not SKYLAND_PASSWORD:
+            raise Exception('账号密码登录需要配置SKYLAND_PHONE和SKYLAND_PASSWORD')
+        return [login_by_password(SKYLAND_PHONE, SKYLAND_PASSWORD)]
+
+    if mode in ('code', 'sms', 'phone'):
+        if not SKYLAND_PHONE:
+            raise Exception('手机号验证码登录需要配置SKYLAND_PHONE')
+
+        if SKYLAND_CODE:
+            return [login_by_phone_code(SKYLAND_PHONE, SKYLAND_CODE)]
+
+        send_phone_code(SKYLAND_PHONE)
+        if sys.stdin.isatty():
+            code = input('请输入短信验证码: ').strip()
+            if not code:
+                raise Exception('未输入短信验证码')
+            return [login_by_phone_code(SKYLAND_PHONE, code)]
+
+        raise Exception('验证码已发送，请把收到的验证码配置到SKYLAND_CODE后重新运行')
+
+    if mode in ('qr', 'qrcode'):
+        raise Exception('当前脚本暂未实现二维码登录接口，请使用SKYLAND_COOKIE、手机号验证码或账号密码登录')
+
+    return []
+
+
+def get_token_by_interactive_login():
+    """
+    手动运行脚本时提供登录方式选择
+    """
+    if not sys.stdin.isatty():
+        return []
+
+    print('\n请选择登录方式:')
+    print('1. 手机号 + 验证码')
+    print('2. 账号密码')
+    print('3. 跳过登录')
+    choice = input('请输入序号: ').strip()
+
+    if choice == '1':
+        phone = input('请输入手机号: ').strip()
+        if not phone:
+            raise Exception('未输入手机号')
+
+        send_phone_code(phone)
+        code = input('请输入短信验证码: ').strip()
+        if not code:
+            raise Exception('未输入短信验证码')
+        return [login_by_phone_code(phone, code)]
+
+    if choice == '2':
+        phone = input('请输入手机号: ').strip()
+        password = getpass('请输入密码: ').strip()
+        if not phone or not password:
+            raise Exception('手机号或密码为空')
+        return [login_by_password(phone, password)]
+
+    return []
 
 
 def get_grant_code(token: str):
@@ -463,8 +605,26 @@ def main():
                 run_message += message + '\n'
                 logging.error(message)
 
+    # 如果配置了登录方式，则通过鹰角账号登录接口自动获取Token。
     if not token_list:
-        error_msg = '没有设置TOKEN，请在环境变量里添加SKYLAND_TOKEN/TOKEN，或添加SKYLAND_COOKIE/SKLAND_COOKIE自动获取Token'
+        try:
+            token_list = get_token_by_login_config()
+        except Exception as e:
+            message = f'自动登录获取Token失败: {e}'
+            run_message += message + '\n'
+            logging.error(message)
+
+    # 手动运行脚本时，允许在终端选择登录方式。
+    if not token_list:
+        try:
+            token_list = get_token_by_interactive_login()
+        except Exception as e:
+            message = f'交互登录获取Token失败: {e}'
+            run_message += message + '\n'
+            logging.error(message)
+
+    if not token_list:
+        error_msg = '没有设置TOKEN，请配置SKYLAND_TOKEN/TOKEN、SKYLAND_COOKIE/SKLAND_COOKIE，或用SKYLAND_LOGIN_MODE=password/code自动登录'
         logging.error(error_msg)
         run_message = error_msg
         send_message('森空岛签到', run_message, SKYLAND_NOTIFY)
