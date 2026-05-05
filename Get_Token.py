@@ -3,7 +3,7 @@
 
 """
 File: Get_Token.py (森空岛扫码获取Token)
-cron: 0 0 0 31 2 *
+cron: 0 0 0 1 1 *
 new Env('森空岛Token获取');
 """
 
