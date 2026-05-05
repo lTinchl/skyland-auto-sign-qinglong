@@ -338,6 +338,8 @@ def save_token_to_qinglong(token: str):
             body['_id'] = env_id
 
         resp = requests.put(f'{QL_URL}/open/envs', json=body, headers=headers, timeout=20).json()
+        if resp.get('code') not in (200, 0) and env_id:
+            resp = requests.put(f'{QL_URL}/open/envs/{env_id}', json=body, headers=headers, timeout=20).json()
     else:
         resp = requests.post(f'{QL_URL}/open/envs', json=[{
             'name': SKYLAND_ENV_NAME,
@@ -346,7 +348,7 @@ def save_token_to_qinglong(token: str):
         }], headers=headers, timeout=20).json()
 
     if resp.get('code') not in (200, 0):
-        raise Exception(f'写入青龙变量失败: {resp.get("message") or resp}')
+        raise Exception(f'写入青龙变量失败: {resp.get("message") or resp.get("data") or resp}')
 
     logging.info(f'已写入青龙环境变量: {SKYLAND_ENV_NAME}')
     return True
