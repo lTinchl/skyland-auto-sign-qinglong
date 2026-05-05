@@ -81,9 +81,7 @@ def show_login_qr(content: str):
 
 
 def create_scan_login():
-    resp = requests.post(SCAN_LOGIN_URL, json={
-        'appCode': APP_CODE
-    }, headers=HEADER_LOGIN, timeout=20).json()
+    resp = requests.post(SCAN_LOGIN_URL, json={}, headers=HEADER_LOGIN, timeout=20).json()
 
     check_auth_response(resp, '创建扫码登录')
 
@@ -128,15 +126,15 @@ def wait_scan_code(scan_id: str):
 
 def login_by_scan_code(scan_code: str):
     resp = requests.post(TOKEN_SCAN_CODE_URL, json={
-        'scanCode': scan_code,
-        'appCode': APP_CODE
+        'scanCode': scan_code
     }, headers=HEADER_LOGIN, timeout=20).json()
 
     check_auth_response(resp, '扫码登录')
 
-    token = resp.get('data', {}).get('token')
+    data = resp.get('data') or {}
+    token = data.get('content') or data.get('token')
     if not token:
-        raise Exception(f'扫码登录失败: 返回结果中没有data.token: {resp}')
+        raise Exception(f'扫码登录失败: 返回结果中没有data.content或data.token: {resp}')
 
     return token
 
@@ -286,6 +284,35 @@ def get_ql_auth_header():
     return {'Authorization': f'Bearer {token}'}
 
 
+def find_qinglong_env(headers: dict):
+    resp = requests.get(f'{QL_URL}/open/envs', params={
+        'searchValue': SKYLAND_ENV_NAME
+    }, headers=headers, timeout=20).json()
+
+    if resp.get('code') not in (200, 0):
+        raise Exception(f'查询青龙变量失败: {resp.get("message") or resp}')
+
+    envs = resp.get('data') or []
+    for env in envs:
+        if env.get('name') == SKYLAND_ENV_NAME:
+            return env
+
+    return None
+
+
+def merge_token_value(old_value: str, token: str):
+    tokens = []
+    for item in (old_value or '').replace(';', '\n').replace(',', '\n').split('\n'):
+        item = item.strip()
+        if item and item not in tokens:
+            tokens.append(item)
+
+    if token not in tokens:
+        tokens.append(token)
+
+    return '\n'.join(tokens)
+
+
 def save_token_to_qinglong(token: str):
     if not SKYLAND_AUTO_SAVE_TOKEN:
         return False
@@ -297,11 +324,26 @@ def save_token_to_qinglong(token: str):
 
     headers['Content-Type'] = 'application/json'
 
-    resp = requests.post(f'{QL_URL}/open/envs', json=[{
-        'name': SKYLAND_ENV_NAME,
-        'value': token,
-        'remarks': '森空岛扫码登录自动创建'
-    }], headers=headers, timeout=20).json()
+    env = find_qinglong_env(headers)
+    if env:
+        env_id = env.get('id') or env.get('_id')
+        new_value = merge_token_value(env.get('value') or '', token)
+        body = {
+            'name': SKYLAND_ENV_NAME,
+            'value': new_value,
+            'remarks': env.get('remarks') or '森空岛Token'
+        }
+        if env_id:
+            body['id'] = env_id
+            body['_id'] = env_id
+
+        resp = requests.put(f'{QL_URL}/open/envs', json=body, headers=headers, timeout=20).json()
+    else:
+        resp = requests.post(f'{QL_URL}/open/envs', json=[{
+            'name': SKYLAND_ENV_NAME,
+            'value': token,
+            'remarks': '森空岛Token'
+        }], headers=headers, timeout=20).json()
 
     if resp.get('code') not in (200, 0):
         raise Exception(f'写入青龙变量失败: {resp.get("message") or resp}')
