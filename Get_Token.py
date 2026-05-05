@@ -23,6 +23,7 @@ SKYLAND_DID = os.getenv('SKYLAND_DID') or uuid.uuid4().hex
 SKYLAND_QR_WAIT = int(os.getenv('SKYLAND_QR_WAIT') or '180')
 SKYLAND_QR_INTERVAL = int(os.getenv('SKYLAND_QR_INTERVAL') or '2')
 SKYLAND_ENV_NAME = os.getenv('SKYLAND_ENV_NAME') or 'SKYLAND_TOKEN'
+SKYLAND_ENV_REMARKS = os.getenv('SKYLAND_ENV_REMARKS') or '森空岛Token'
 SKYLAND_AUTO_SAVE_TOKEN = (os.getenv('SKYLAND_AUTO_SAVE_TOKEN') or '1').strip().lower() not in ('0', 'false', 'no')
 SKYLAND_LOGIN_MODE = (os.getenv('SKYLAND_LOGIN_MODE') or '').strip()
 SKYLAND_PHONE = os.getenv('SKYLAND_PHONE') or ''
@@ -284,33 +285,56 @@ def get_ql_auth_header():
     return {'Authorization': f'Bearer {token}'}
 
 
-def find_qinglong_env(headers: dict):
+def get_qinglong_envs(headers: dict):
     resp = requests.get(f'{QL_URL}/open/envs', params={
         'searchValue': SKYLAND_ENV_NAME
     }, headers=headers, timeout=20).json()
 
     if resp.get('code') not in (200, 0):
-        raise Exception(f'查询青龙变量失败: {resp.get("message") or resp}')
+        raise Exception(f'查询青龙变量失败: {resp.get("message") or resp.get("data") or resp}')
 
     envs = resp.get('data') or []
-    for env in envs:
-        if env.get('name') == SKYLAND_ENV_NAME:
-            return env
-
-    return None
+    return [env for env in envs if env.get('name') == SKYLAND_ENV_NAME]
 
 
-def merge_token_value(old_value: str, token: str):
-    tokens = []
-    for item in (old_value or '').replace(';', '\n').replace(',', '\n').split('\n'):
+def append_token_value(old_value: str, token: str):
+    values = []
+    for item in (old_value or '').replace('\n', ';').replace(',', ';').split(';'):
         item = item.strip()
-        if item and item not in tokens:
-            tokens.append(item)
+        if item and item not in values:
+            values.append(item)
 
-    if token not in tokens:
-        tokens.append(token)
+    if token not in values:
+        values.append(token)
 
-    return '\n'.join(tokens)
+    return ';'.join(values)
+
+
+def update_qinglong_env(env: dict, value: str, headers: dict):
+    env_id = env.get('id') or env.get('_id')
+    if not env_id:
+        raise Exception(f'更新青龙变量失败: 未找到变量id: {env}')
+
+    resp = requests.put(f'{QL_URL}/open/envs', json={
+        'id': env_id,
+        'name': SKYLAND_ENV_NAME,
+        'value': value,
+        'remarks': env.get('remarks') or SKYLAND_ENV_REMARKS
+    }, headers=headers, timeout=20).json()
+
+    if resp.get('code') not in (200, 0):
+        raise Exception(f'更新青龙变量失败: {resp.get("message") or resp.get("data") or resp}')
+
+
+def create_qinglong_env(token: str, headers: dict):
+    resp = requests.post(f'{QL_URL}/open/envs', json=[{
+        'name': SKYLAND_ENV_NAME,
+        'value': token,
+        'remarks': SKYLAND_ENV_REMARKS
+    }], headers=headers, timeout=20).json()
+
+    if resp.get('code') not in (200, 0):
+        raise Exception(f'创建青龙变量失败: {resp.get("message") or resp.get("data") or resp}')
 
 
 def save_token_to_qinglong(token: str):
@@ -324,33 +348,16 @@ def save_token_to_qinglong(token: str):
 
     headers['Content-Type'] = 'application/json'
 
-    env = find_qinglong_env(headers)
-    if env:
-        env_id = env.get('id') or env.get('_id')
-        new_value = merge_token_value(env.get('value') or '', token)
-        body = {
-            'name': SKYLAND_ENV_NAME,
-            'value': new_value,
-            'remarks': env.get('remarks') or '森空岛Token'
-        }
-        if env_id:
-            body['id'] = env_id
-            body['_id'] = env_id
-
-        resp = requests.put(f'{QL_URL}/open/envs', json=body, headers=headers, timeout=20).json()
-        if resp.get('code') not in (200, 0) and env_id:
-            resp = requests.put(f'{QL_URL}/open/envs/{env_id}', json=body, headers=headers, timeout=20).json()
+    env_list = get_qinglong_envs(headers)
+    if env_list:
+        old_value = env_list[0].get('value') or ''
+        new_value = append_token_value(old_value, token)
+        update_qinglong_env(env_list[0], new_value, headers)
+        logging.info(f'已更新青龙环境变量: {SKYLAND_ENV_NAME}')
     else:
-        resp = requests.post(f'{QL_URL}/open/envs', json=[{
-            'name': SKYLAND_ENV_NAME,
-            'value': token,
-            'remarks': '森空岛Token'
-        }], headers=headers, timeout=20).json()
+        create_qinglong_env(token, headers)
+        logging.info(f'已创建青龙环境变量: {SKYLAND_ENV_NAME}')
 
-    if resp.get('code') not in (200, 0):
-        raise Exception(f'写入青龙变量失败: {resp.get("message") or resp.get("data") or resp}')
-
-    logging.info(f'已写入青龙环境变量: {SKYLAND_ENV_NAME}')
     return True
 
 
